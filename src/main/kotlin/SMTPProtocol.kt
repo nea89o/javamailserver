@@ -162,35 +162,54 @@ class SMTPReceiveProtocol(val localHost: String, val inetAddress: InetAddress) :
         Commands(line, this).block()
     }
 
+    data class Mail(val sender: String, val recipient: List<String>, val text: String)
+
+    class MailTransaction(
+        var isHelod: Boolean = false,
+        var isEhlod: Boolean = false,
+        var recipients: MutableList<String> = mutableListOf(),
+        var sender: String? = null,
+    ) {
+        fun reset() {
+            recipients = mutableListOf()
+            sender = null
+        }
+    }
+
     override suspend fun IO.execute() {
         send("220 $localHost\r\n")
-        var isHelod = false
-        var receipient: String? = null
-        var sender: String? = null
-        var text: String? = null
+        val messages = mutableListOf<Mail>()
+        val trans = MailTransaction()
         while (isOpen()) {
             commands(readLine()) {
                 println(line)
-                command("HELO", "EHLO") {
+                command("EHLO") {
+                    send("250 hello advanced $it\r\n")
+                    trans.isHelod = true
+                    trans.isEhlod = true
+                }
+                command("HELO") {
                     send("250 Hello $it, how are you on this fine day?\r\n")
-                    isHelod = true
+                    trans.isHelod = true
                 }
                 command("MAIL FROM:") {
                     send("250 Sender ok\r\n")
-                    sender = it
+                    trans.sender = it
                 }
                 command("RCPT TO:") {
                     send("250 Receipient ok\r\n")
-                    receipient = it
+                    trans.recipients.add(it)
                 }
                 command("DATA") {
                     send("354 Enter mail, end with \".\" on a line by itself\r\n")
-                    text = ""
+                    var text = ""
                     while (true) {
                         val tmp = readLine()
                         if (tmp == ".") break
-                        text += tmp + "\r\n"
+                        text += tmp + "\n"
                     }
+                    messages.add(Mail(trans.sender!!, trans.recipients.toList(), text))
+                    trans.reset()
                     send("250 Message accepted for delivery\r\n")
                 }
                 command("QUIT") {
@@ -198,13 +217,16 @@ class SMTPReceiveProtocol(val localHost: String, val inetAddress: InetAddress) :
                     close()
                 }
                 otherwise {
-                    send("XXX ERROR UNKNOWN CODE $it\r\n")
+                    send("500 ERROR UNKNOWN CODE $it\r\n")
                 }
             }
         }
-        println("IsHelod: $isHelod")
-        println("From: $sender")
-        println("To: $receipient")
-        println("\n$text")
+        println("Got ${messages.size} messages")
+        messages.forEach {
+            println("Message:")
+            println("MAIL FROM: ${it.sender}")
+            println("RCPTS TO: ${it.recipient}")
+            println("CONTENT: ${it.text}")
+        }
     }
 }
